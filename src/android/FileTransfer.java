@@ -37,6 +37,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.Inflater;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -264,8 +266,45 @@ public class FileTransfer extends CordovaPlugin {
         public boolean verify(String hostname, SSLSession session) {
             return true;
         }
-    };
+    };    
 
+    // Create a trust manager that does not validate certificate chains
+    private static final TrustManager[] trustAllCerts = new TrustManager[] { new X509TrustManager() {
+        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+            return new java.security.cert.X509Certificate[] {};
+        }
+        
+        public void checkClientTrusted(X509Certificate[] chain,
+                String authType) throws CertificateException {
+        }
+        
+        public void checkServerTrusted(X509Certificate[] chain,
+                String authType) throws CertificateException {
+        }
+    } };
+
+    /**
+     * This function will install a trust manager that will blindly trust all SSL
+     * certificates.  The reason this code is being added is to enable developers
+     * to do development using self signed SSL certificates on their web server.
+     *
+     * The standard HttpsURLConnection class will throw an exception on self
+     * signed certificates if this code is not run.
+     */
+    private static SSLSocketFactory trustAllHosts(HttpsURLConnection connection) {
+        // Install the all-trusting trust manager
+        SSLSocketFactory oldFactory = connection.getSSLSocketFactory();
+        try {
+            // Install our all trusting manager
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(null, trustAllCerts, new java.security.SecureRandom());
+            SSLSocketFactory newFactory = sc.getSocketFactory();
+            connection.setSSLSocketFactory(newFactory);
+        } catch (Exception e) {
+            //Log.e(LOG_TAG, e.getMessage(), e);
+        }
+        return oldFactory;
+    }
     /**
      * Uploads the specified file to the server URL provided using an HTTP multipart request.
      * @param source        Full path of the file on the file system
@@ -745,6 +784,8 @@ public class FileTransfer extends CordovaPlugin {
                 Uri targetUri = resourceApi.remapUri(
                         tmpTarget.getScheme() != null ? tmpTarget : Uri.fromFile(new File(target)));
                 HttpURLConnection connection = null;
+                HostnameVerifier oldHostnameVerifier = null;
+                SSLSocketFactory oldSocketFactory = null;
                 File file = null;
                 PluginResult result = null;
                 TrackingInputStream inputStream = null;
